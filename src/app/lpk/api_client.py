@@ -1,9 +1,10 @@
+from typing import Final
+
 import httpx
 
-from typing import Final
-from . import logger
-from .models import Response, ProductResponse
 from .. import config
+from . import logger
+from .models import ProductResponse, Response
 
 LPK_BASE_URL: Final[str] = "https://www.lapakgaming.com"
 
@@ -13,16 +14,17 @@ class LpkAPIClient:
         self.client = httpx.Client()
         self.base_url = LPK_BASE_URL
 
-    def get_all_products(self) -> Response[ProductResponse]:
+    def get_all_products(self, country_code: str = "id") -> Response[ProductResponse]:
         logger.info("API Get all product")
 
         headers = {
             "Authorization": f"Bearer {config.LAPAK_API_KEY}",
         }
 
-        res = self.client.get(f"{self.base_url}/api/all-products", headers=headers)
-
-        print(res.headers)
+        res = self.client.get(
+            f"{self.base_url}/api/all-products?country_code={country_code}",
+            headers=headers,
+        )
 
         try:
             res.raise_for_status()

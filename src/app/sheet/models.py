@@ -16,6 +16,16 @@ COL_META: Final[str] = "col_name_xxx"
 IS_UPDATE_META: Final[str] = "is_update_xxx"
 IS_NOTE_META: Final[str] = "is_note_xxx"
 
+INCLUDE_ROW_INDEX: Final[int] = 2
+EXCLUDE_ROW_INDEX: Final[int] = 3
+RELAX_ROW_INDEX: Final[int] = 2
+
+
+class InExKeywordRelaxTime(BaseModel):
+    include_keywords: dict[str, list[str] | None]
+    exclude_keywords: dict[str, list[str] | None]
+    relax_time: int
+
 
 class ColSheetModel(BaseModel):
     # Model config
@@ -49,7 +59,7 @@ class ColSheetModel(BaseModel):
         return mapping_fields
 
     @classmethod
-    def update_mapping_fields(cls) -> dict:
+    def updated_mapping_fields(cls) -> dict:
         mapping_fields = {}
         for field_name, field_info in cls.model_fields.items():
             if hasattr(field_info, "metadata"):
@@ -143,7 +153,7 @@ class ColSheetModel(BaseModel):
             sheet_id=sheet_id,
             sheet_name=sheet_name,
         )
-        mapping_dict = cls.update_mapping_fields()
+        mapping_dict = cls.updated_mapping_fields()
         update_batch = []
 
         for object in list_object:
@@ -164,7 +174,7 @@ class ColSheetModel(BaseModel):
     def update(
         self,
     ) -> None:
-        mapping_dict = self.update_mapping_fields()
+        mapping_dict = self.updated_mapping_fields()
         model_dict = self.model_dump(mode="json")
 
         worksheet = self.get_worksheet(
@@ -210,129 +220,88 @@ class ColSheetModel(BaseModel):
                         )
 
 
-class RowRun(ColSheetModel):
+class Product(ColSheetModel):
     CHECK: Annotated[
-        str,
+        str | None,
         {
             COL_META: "A",
         },
-    ]
-    PRODUCT_NAME: Annotated[
-        str,
+    ] = None
+    code: Annotated[
+        str | None,
         {
             COL_META: "B",
+            IS_UPDATE_META: True,
         },
-    ]
-    PRODUCT_COMPARE: Annotated[
-        str,
+    ] = None
+    category_code: Annotated[
+        str | None,
         {
             COL_META: "C",
+            IS_UPDATE_META: True,
         },
-    ]
-    LOWEST_PRICE_USD: Annotated[
+    ] = None
+    name: Annotated[
         str | None,
         {
             COL_META: "D",
             IS_UPDATE_META: True,
         },
     ] = None
-    LOWEST_PRICE_EUR: Annotated[
+    provider_code: Annotated[
         str | None,
         {
             COL_META: "E",
             IS_UPDATE_META: True,
         },
     ] = None
-    SELLER: Annotated[
+    price: Annotated[
         str | None,
         {
             COL_META: "F",
             IS_UPDATE_META: True,
         },
     ] = None
-    Time_update: Annotated[
+    process_time: Annotated[
         str | None,
         {
             COL_META: "G",
             IS_UPDATE_META: True,
         },
     ] = None
-    Note: Annotated[
+    country_code: Annotated[
         str | None,
         {
             COL_META: "H",
             IS_UPDATE_META: True,
-            IS_NOTE_META: True,
         },
     ] = None
-    Top: Annotated[
+    status: Annotated[
         str | None,
         {
             COL_META: "I",
             IS_UPDATE_META: True,
         },
     ] = None
-    CNLGAMING_USD: Annotated[
+    Note: Annotated[
         str | None,
         {
             COL_META: "J",
             IS_UPDATE_META: True,
+            IS_NOTE_META: True,
         },
     ] = None
-    CNLGAMING_EUR: Annotated[
-        str | None,
+    Relax: Annotated[
+        int | None,
         {
             COL_META: "K",
-            IS_UPDATE_META: True,
         },
     ] = None
-    FEEDBACK_QTY: Annotated[
-        int,
-        {
-            COL_META: "L",
-        },
-    ]
-    FEEDBACK_PERCENT: Annotated[
-        float,
-        {
-            COL_META: "M",
-        },
-    ]
-    DELIVERY_TIME: Annotated[
-        int,
-        {
-            COL_META: "N",
-        },
-    ]
-    MIN_QTY: Annotated[
-        int,
-        {
-            COL_META: "O",
-        },
-    ]
-    STOCK1: Annotated[
-        int,
-        {
-            COL_META: "P",
-        },
-    ]
-    BLACKLIST_RANGE: Annotated[
-        str,
-        {
-            COL_META: "Q",
-        },
-    ]
-    RELAX: Annotated[
-        float,
-        {
-            COL_META: "R",
-        },
-    ]
 
     @staticmethod
     @retry_on_fail(max_retries=5, sleep_interval=10)
     def get_run_indexes(sheet_id: str, sheet_name: str, col_index: int) -> list[int]:
-        sheet = RowRun.get_worksheet(sheet_id=sheet_id, sheet_name=sheet_name)
+        sheet = Product.get_worksheet(sheet_id=sheet_id, sheet_name=sheet_name)
         run_indexes = []
         check_col = sheet.col_values(col_index)
         for idx, value in enumerate(check_col):
@@ -344,21 +313,37 @@ class RowRun(ColSheetModel):
 
         return run_indexes
 
-    def get_blacklist(self) -> list[str]:
-        g_client = service_account(ROOT_PATH.joinpath(config.KEYS_PATH))
+    @staticmethod
+    def get_start_index() -> int:
+        return 4
 
-        spreadsheet = g_client.open_by_key(self.sheet_id)
+    @staticmethod
+    @retry_on_fail(max_retries=10, sleep_interval=10)
+    def get_include_exclude_keywords_mapping_relax_time(
+        sheet_id: str, sheet_name: str
+    ) -> InExKeywordRelaxTime:
+        [include, exclude] = Product.batch_get(
+            sheet_id=sheet_id,
+            sheet_name=sheet_name,
+            indexes=[INCLUDE_ROW_INDEX, EXCLUDE_ROW_INDEX],
+        )
 
-        worksheet = spreadsheet.worksheet(self.sheet_name)
+        updated_mapping_fields = Product.updated_mapping_fields()
 
-        blacklist = worksheet.batch_get([self.BLACKLIST_RANGE])[0]
-        if blacklist:
-            res = []
-            for blist in blacklist:
-                for i in blist:
-                    res.append(i)
-            return res
+        include_dict = {
+            k: v.split(",") if v else None
+            for k, v in include.model_dump(mode="json").items()
+            if k in updated_mapping_fields
+        }
 
-        raise SheetError(
-            f"{self.sheet_id}->{self.sheet_name}->{self.BLACKLIST_RANGE} is None"
+        exclude_dict = {
+            k: v.split(",") if v else None
+            for k, v in exclude.model_dump(mode="json").items()
+            if k in updated_mapping_fields
+        }
+
+        return InExKeywordRelaxTime(
+            include_keywords=include_dict,
+            exclude_keywords=exclude_dict,
+            relax_time=include.Relax if include.Relax else 3600,
         )
