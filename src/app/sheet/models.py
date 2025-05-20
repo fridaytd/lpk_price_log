@@ -1,15 +1,11 @@
 from typing import Annotated, Final, Self
 
-from gspread import service_account
 from gspread.worksheet import Worksheet
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
-from app import config
-from app.paths import ROOT_PATH
 
 from ..shared.decorators import retry_on_fail
 from .enums import CheckType
-from .exceptions import SheetError
 from .g_sheet import gsheet_client
 
 COL_META: Final[str] = "col_name_xxx"
@@ -298,6 +294,10 @@ class Product(ColSheetModel):
         },
     ] = None
 
+    @field_validator("price", "process_time", mode="before")
+    def convert_to_str(cls, v):
+        return str(v) if isinstance(v, (int, float)) else v
+
     @staticmethod
     @retry_on_fail(max_retries=5, sleep_interval=10)
     def get_run_indexes(sheet_id: str, sheet_name: str, col_index: int) -> list[int]:
@@ -331,13 +331,13 @@ class Product(ColSheetModel):
         updated_mapping_fields = Product.updated_mapping_fields()
 
         include_dict = {
-            k: v.split(",") if v else None
+            k: [i.strip() for i in v.split(",")] if v else None
             for k, v in include.model_dump(mode="json").items()
             if k in updated_mapping_fields
         }
 
         exclude_dict = {
-            k: v.split(",") if v else None
+            k: [i.strip() for i in v.split(",")] if v else None
             for k, v in exclude.model_dump(mode="json").items()
             if k in updated_mapping_fields
         }
@@ -347,3 +347,28 @@ class Product(ColSheetModel):
             exclude_keywords=exclude_dict,
             relax_time=include.Relax if include.Relax else 3600,
         )
+
+    @staticmethod
+    @retry_on_fail(max_retries=10, sleep_interval=10)
+    def clear_sheet(sheet_id: str, sheet_name: str, start_row: int) -> None:
+        worksheet = Product.get_worksheet(sheet_id=sheet_id, sheet_name=sheet_name)
+        # Fetch sheet dimensions
+        total_rows = worksheet.row_count
+        total_cols = worksheet.col_count
+
+        # Helper to convert column index to letter (e.g., 1 -> 'A', 27 -> 'AA')
+        def _col_idx_to_letter(idx: int) -> str:
+            letters = ""
+            while idx > 0:
+                idx, rem = divmod(idx - 1, 26)
+                letters = chr(65 + rem) + letters
+            return letters
+
+        end_col_letter = _col_idx_to_letter(total_cols)
+        end_range = f"{end_col_letter}{total_rows}"  # e.g. 'Z1000'
+
+        # Define A1 range to clear: from A{start_row} to end
+        clear_range = f"A{start_row}:{end_range}"
+
+        # Perform batch clear
+        worksheet.batch_clear([clear_range])
